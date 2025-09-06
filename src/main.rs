@@ -11,17 +11,23 @@ pub mod provider;
 
 #[derive(Debug, Clone, clap::Parser)]
 pub struct Args {
+    /// The name of the package to download
     #[arg(long, short)]
     pub package_name: String,
+    /// The version to download. Optional. If unspecified, the latest version will be downloaded
     #[arg(long, short)]
     pub version: Option<String>,
+    /// Do not print any output to the console
     #[arg(long, short)]
     pub silent: bool,
+    // Location to write the apk to. Creates any directories necessary.
     #[arg(long, short)]
-    pub output_dir: PathBuf,
+    pub output_path: PathBuf,
     #[arg(long)]
+    /// Skip downloading if the APK already exists
     pub skip_if_exists: bool,
     #[arg(long)]
+    /// Only print the version, then exit. Useful if you just want to fetch the latest version available.
     pub only_get_version: bool,
 }
 
@@ -36,11 +42,13 @@ impl Args {
             return Ok(());
         }
 
-        let path = self.output_dir.join(self.package_name);
+        let parent_dir = self.output_path.parent();
 
-        std::fs::create_dir_all(&path)?;
+        if let Some(parent) = parent_dir {
+            std::fs::create_dir_all(parent)?;
+        }
 
-        let path = path.join(format!("{}.apk", version));
+        let path = self.output_path;
 
         if std::fs::exists(&path)? && self.skip_if_exists {
             if !self.silent {
