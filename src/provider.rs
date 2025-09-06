@@ -82,10 +82,14 @@ pub async fn download_streamed(
 
         let current_size = data.len();
         if let Some(callback) = callback {
-            callback(current_size, total_size)
+            callback(current_size, total_size);
         };
 
         data.extend_from_slice(&item);
+    }
+
+    if let Some(callback) = callback {
+        callback(data.len(), total_size);
     }
 
     Ok(data)
