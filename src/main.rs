@@ -10,7 +10,7 @@ pub mod apkpure;
 pub mod provider;
 
 #[derive(Debug, Clone, clap::Parser)]
-pub struct Args {
+pub struct DownloadArgs {
     /// The name of the package to download
     #[arg(long, short)]
     pub package_name: String,
@@ -26,20 +26,18 @@ pub struct Args {
     #[arg(long)]
     /// Skip downloading if the APK already exists
     pub skip_if_exists: bool,
-    #[arg(long)]
-    /// Only print the version, then exit. Useful if you just want to fetch the latest version available.
-    pub only_get_version: bool,
 }
+impl DownloadArgs {
+    async fn download(&self, apk_pure: ApkPure) -> Result<(), Box<dyn std::error::Error>> {
+        let (url, version) = get_url(
+            &self.package_name,
+            self.version.as_ref().map(|v| v.as_str()),
+            apk_pure,
+        )
+        .await?;
 
-impl Args {
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let apk_pure = ApkPure {};
-
-        let (url, version) = self.get_url(apk_pure).await?;
-
-        if self.only_get_version {
-            println!("{version}");
-            return Ok(());
+        if !self.silent {
+            println!("downloading version: {version}")
         }
 
         let parent_dir = self.output_path.parent();
@@ -48,11 +46,12 @@ impl Args {
             std::fs::create_dir_all(parent)?;
         }
 
-        let path = self.output_path;
-
-        if std::fs::exists(&path)? && self.skip_if_exists {
+        if std::fs::exists(&self.output_path)? && self.skip_if_exists {
             if !self.silent {
-                println!("skipping apk download as {} already exists", path.display());
+                println!(
+                    "skipping apk download as {} already exists",
+                    self.output_path.display()
+                );
             }
             return Ok(());
         }
@@ -62,46 +61,86 @@ impl Args {
         let data = download_streamed(&url, callback).await?;
 
         if !self.silent {
-            println!("saving apk to: {}", path.display());
+            println!("saving apk to: {}", self.output_path.display());
         }
 
-        std::fs::write(path, data)?;
+        std::fs::write(&self.output_path, data)?;
 
         Ok(())
     }
+}
 
-    async fn get_url(
-        &self,
-        apk_pure: ApkPure,
-    ) -> Result<(String, String), Box<dyn std::error::Error>> {
-        if let Some(ref version) = self.version {
-            let url = apk_pure
-                .get_version_url(&self.package_name, &version)
-                .await?;
+#[derive(Debug, Clone, clap::Parser)]
+pub struct GetLatestArgs {
+    /// The name of the package to download
+    #[arg(long, short)]
+    pub package_name: String,
+}
+impl GetLatestArgs {
+    async fn get_latest(&self, apk_pure: ApkPure) -> Result<(), Box<dyn std::error::Error>> {
+        let latest = apk_pure
+            .get_latest_version(&self.package_name)
+            .await?
+            .ok_or(std::io::Error::other("no latest version found"))?
+            .0;
 
-            Ok((url, version.to_string()))
-        } else {
-            let (latest_version, url) = apk_pure
-                .get_latest_version(&self.package_name)
+        println!("{latest}");
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum Command {
+    Download(DownloadArgs),
+    GetLatest(GetLatestArgs),
+}
+
+#[derive(Debug, Clone, clap::Parser)]
+pub struct Args {
+    #[command(subcommand)]
+    pub subcommand: Command,
+}
+
+impl Args {
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+        let apk_pure = ApkPure {};
+
+        match self.subcommand {
+            Command::Download(download_args) => download_args.download(apk_pure).await,
+            Command::GetLatest(get_latest_args) => get_latest_args.get_latest(apk_pure).await,
+        }
+    }
+}
+
+async fn get_url(
+    package_name: &str,
+    version: Option<&str>,
+    apk_pure: ApkPure,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    if let Some(ref version) = version {
+        let url = apk_pure.get_version_url(package_name, version).await?;
+
+        Ok((url, version.to_string()))
+    } else {
+        let (latest_version, url) =
+            apk_pure
+                .get_latest_version(package_name)
                 .await?
                 .ok_or(std::io::Error::other(format!(
                     "no latest version found for package: {0}",
-                    &self.package_name
+                    package_name
                 )))?;
 
-            let url = if let Some(url) = url {
-                url
-            } else {
-                apk_pure
-                    .get_version_url(&self.package_name, &latest_version)
-                    .await?
-            };
+        let url = if let Some(url) = url {
+            url
+        } else {
+            apk_pure
+                .get_version_url(package_name, &latest_version)
+                .await?
+        };
 
-            if !self.silent {
-                println!("latest version: {latest_version}");
-            }
-            Ok((url, latest_version))
-        }
+        Ok((url, latest_version))
     }
 }
 
